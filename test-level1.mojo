@@ -171,10 +171,9 @@ def axpy_test[
         y = ctx.enqueue_create_host_buffer[dtype](size)
         mojo_res = ctx.enqueue_create_host_buffer[dtype](size)
 
-        seed()
-        rand[dtype](UnsafePointer[SIMD[dtype, 1]](to=a), 1)
-        rand[dtype](x.unsafe_ptr(), size)
-        rand[dtype](y.unsafe_ptr(), size)
+        generate_random_arr[dtype, 1](UnsafePointer[SIMD[dtype, 1]](to=a), -10000, 10000)
+        generate_random_arr[dtype, size](x.unsafe_ptr(), -10000, 10000)
+        generate_random_arr[dtype, size](y.unsafe_ptr(), -10000, 10000)
         # print("a = ", a)
         # print("x = ", x)
         # print("y = ", y)
