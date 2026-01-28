@@ -29,8 +29,6 @@ def generate_random_arr[
     for i in range(size):
         a[i] = min_value + a[i] * rng
 
-comptime atol = 1.0E-6
-
 def dot_test[
     dtype: DType,
     size:  Int
@@ -161,8 +159,12 @@ def iamax_test[
             assert_equal(res_mojo[0], sp_res_mojo)
 
 
-def test_axpy():
+def axpy_test[
+    dtype: DType,
+    size:  Int
+]():
     with DeviceContext() as ctx:
+        print("[ axpy test:", dtype, "]")
 
         a: SIMD[dtype, 1] = 0
         x = ctx.enqueue_create_host_buffer[dtype](size)
@@ -173,9 +175,9 @@ def test_axpy():
         rand[dtype](UnsafePointer[SIMD[dtype, 1]](to=a), 1)
         rand[dtype](x.unsafe_ptr(), size)
         rand[dtype](y.unsafe_ptr(), size)
-        print("a = ", a)
-        print("x = ", x)
-        print("y = ", y)
+        # print("a = ", a)
+        # print("x = ", x)
+        # print("y = ", y)
 
         d_x = ctx.enqueue_create_buffer[dtype](size)
         d_y = ctx.enqueue_create_buffer[dtype](size)
@@ -200,18 +202,25 @@ def test_axpy():
         for i in range(size):
             x_py.append(x[i])
             y_py.append(y[i])
-        sp_result = sp_blas.saxpy(x_py, y_py, a=a)
-        print(sp_result)
+
+        if dtype == DType.float32:
+            sp_result = sp_blas.saxpy(x_py, y_py, a=a)
+        elif dtype == DType.float64:
+            sp_result = sp_blas.daxpy(x_py, y_py, a=a)
+        else:
+            print(dtype , "is not supported by SciPy")
+            return
 
         ctx.enqueue_copy(mojo_res, d_y)
         ctx.synchronize()
 
-        print("out:", mojo_res)
-        print("expected", sp_result)
+        # Prints too much for large vectors. May want to add a verbose option
+        # print("out:", mojo_res)
+        # print("expected", sp_result)
 
         for i in range(size):
-            var f: Float32 = Float32(py=sp_result[i])
-            assert_almost_equal(Float32(py=sp_result[i]), mojo_res[i], atol=1.0E-6)
+            var f = Scalar[dtype](py=sp_result[i])
+            assert_almost_equal(Scalar[dtype](py=sp_result[i]), mojo_res[i], atol=1.0E-6)
 
 def test_iamax():
     iamax_test[DType.float32, 256]()
@@ -221,6 +230,10 @@ def test_dot():
     dot_test[DType.float32, 256]()
     # It looks like warp_sum doesn't support float64
     # dot_test[DType.float64, 256]()
+
+def test_axpy():
+    axpy_test[DType.float32, 256]()
+    axpy_test[DType.float64, 256]()
 
 def main():
     print("--- MojoBLAS Level 1 routines testing ---")
