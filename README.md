@@ -30,6 +30,11 @@ NVIDIA and AMD hardware, and matches performance in current C++ BLAS libraries.
         echo 'export PATH="$HOME/.pixi/bin:$PATH"' >> ~/.bashrc
         source ~/.bashrc
         ```
+        - For Macs with bash shells, sometimes this command fails to add the `pixi` path to the login shell, which means this path won't be remembered by future shells. If you are running into an issue where new bash shells can't find the pixi executable, try adding it to your bash profile with:
+        ```
+        echo 'if [ -f ~/.bashrc ]; then . ~/.bashrc; fi' >> ~/.bash_profile
+        source ~/.bash_profile
+        ```
 3. Test `pixi` installation
 - If `pixi` has been successfully installed, you will see the `pixi` version return with this test:
     ```
