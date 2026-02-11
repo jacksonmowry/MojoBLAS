@@ -2,6 +2,10 @@ from memory import stack_allocation
 from gpu.memory import AddressSpace
 from gpu import thread_idx, block_dim, block_idx, barrier
 from os.atomic import Atomic
+from gpu.host import DeviceContext
+from math import ceildiv
+
+comptime TBsize = 512
 
 # level1.iamax
 # finds the index of the first element having maximum absolute value
@@ -73,6 +77,23 @@ fn iamax_device[
         stride //= 2
 
     # Thread 0 atomically updates the global result
-    # TODO: complete this
+    # TODO: complete this to support more than one thread block
     if local_tid == 0:
         result[0] = shared_indices[0]
+
+
+fn blas_iamax[dtype: DType](
+    n: Int,
+    d_v: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    incx: Int,
+    d_res: UnsafePointer[Scalar[DType.int64], MutAnyOrigin],
+    ctx: DeviceContext
+) raises:
+    comptime kernel = iamax_device[TBsize, dtype]
+    ctx.enqueue_function[kernel, kernel](
+        n, d_v, incx,
+        d_res,
+        grid_dim=1,         # total thread blocks
+        block_dim=TBsize    # threads per block
+    )
+    ctx.synchronize()

@@ -1,4 +1,8 @@
 from gpu import grid_dim, block_dim, block_idx, thread_idx
+from gpu.host import DeviceContext
+from math import ceildiv
+
+comptime TBsize = 512
 
 # level1.rot
 # applies a plane rotation to vectors x and y
@@ -28,3 +32,25 @@ fn rot_device[
         var tmp = c * x[ix] + s * y[iy]
         y[iy] = c * y[iy] - s * x[ix]
         x[ix] = tmp
+
+
+fn blas_rot[dtype: DType](
+    n: Int,
+    d_x: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    incx: Int,
+    d_y: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    incy: Int,
+    c: Scalar[dtype],
+    s: Scalar[dtype],
+    ctx: DeviceContext
+) raises:
+    comptime kernel = rot_device[TBsize, dtype]
+    ctx.enqueue_function[kernel, kernel](
+        n,
+        d_x, incx,
+        d_y, incy,
+        c, s,
+        grid_dim=ceildiv(n, TBsize),     # total thread blocks
+        block_dim=TBsize                    # threads per block
+    )
+    ctx.synchronize()

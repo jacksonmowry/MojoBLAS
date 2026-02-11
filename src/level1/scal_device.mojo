@@ -1,4 +1,8 @@
 from gpu import grid_dim, block_dim, global_idx
+from gpu.host import DeviceContext
+from math import ceildiv
+
+comptime TBsize = 512
 
 fn scal_device[dtype: DType](
     n: Int,
@@ -20,3 +24,18 @@ fn scal_device[dtype: DType](
     for i in range(global_i, n, n_threads):
         x[i*incx] *= a
 
+
+fn blas_scal[dtype: DType] (
+    n: Int,
+    a: Scalar[dtype],
+    d_x: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    incx: Int,
+    ctx: DeviceContext
+) raises:
+    comptime kernel = scal_device[dtype]
+    ctx.enqueue_function[kernel, kernel](
+        n, a, d_x, incx,
+        grid_dim=ceildiv(n, TBsize),
+        block_dim=TBsize,
+    )
+    ctx.synchronize()

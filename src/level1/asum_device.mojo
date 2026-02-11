@@ -2,6 +2,10 @@ from memory import stack_allocation
 from gpu.memory import AddressSpace
 from gpu import thread_idx, block_idx, grid_dim, barrier
 from os.atomic import Atomic
+from gpu.host import DeviceContext
+from math import ceildiv
+
+comptime TBsize = 512
 
 # level1.asum
 # computes the sum of absolute values of vector elements
@@ -52,3 +56,21 @@ fn asum_device[
     # Thread 0 atomically adds block result to global sum
     if local_tid == 0:
         _ = Atomic[dtype].fetch_add(result, shared_sums[0])
+
+
+fn blas_asum[dtype: DType](
+    n: Int,
+    d_v: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    incx: Int,
+    d_res: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    ctx: DeviceContext
+) raises:
+    comptime kernel = asum_device[TBsize, dtype]
+    ctx.enqueue_function[kernel, kernel](
+        n,
+        d_v, incx,
+        d_res,
+        grid_dim=ceildiv(n, TBsize),     # total thread blocks
+        block_dim=TBsize                 # threads per block
+    )
+    ctx.synchronize()

@@ -1,4 +1,8 @@
 from gpu import grid_dim, block_dim, global_idx
+from gpu.host import DeviceContext
+from math import ceildiv
+
+comptime TBsize = 512
 
 fn swap_device[dtype: DType](
     n: Int,
@@ -20,3 +24,22 @@ fn swap_device[dtype: DType](
         var tmp = x[i * incx]
         x[i * incx] = y[i * incy]
         y[i * incy] = tmp
+
+
+fn blas_swap[dtype: DType](
+    n: Int,
+    d_x: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    incx: Int,
+    d_y: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    incy: Int,
+    ctx: DeviceContext
+) raises:
+    comptime kernel = swap_device[dtype]
+    ctx.enqueue_function[kernel, kernel](
+        n,
+        d_x, incx,
+        d_y, incy,
+        grid_dim=ceildiv(n, TBsize),
+        block_dim=TBsize,
+    )
+    ctx.synchronize()

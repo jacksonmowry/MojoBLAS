@@ -1,4 +1,8 @@
 from gpu import grid_dim, block_dim, global_idx
+from gpu.host import DeviceContext
+from math import ceildiv
+
+comptime TBsize = 512
 
 fn axpy_device[dtype: DType](
     n: Int,
@@ -21,3 +25,23 @@ fn axpy_device[dtype: DType](
     # Multiple cells per thread
     for i in range(global_i, n, n_threads):
         y[i*incy] += a * x[i*incx]
+
+
+fn blas_axpy[dtype: DType](
+    n: Int,
+    a: Scalar[dtype],
+    d_x: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    incx: Int,
+    d_y: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    incy: Int,
+    ctx: DeviceContext
+) raises:
+    comptime kernel = axpy_device[dtype]
+    ctx.enqueue_function[kernel, kernel](
+        n, a,
+        d_x, incx,
+        d_y, incy,
+        grid_dim=ceildiv(n, TBsize),
+        block_dim=TBsize,
+    )
+    ctx.synchronize()
