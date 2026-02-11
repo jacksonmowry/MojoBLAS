@@ -1,32 +1,71 @@
-from gpu import thread_idx, block_idx, block_dim, lane_id
-from gpu.host import DeviceContext, HostBuffer, DeviceBuffer
-from layout import Layout, LayoutTensor
-from gpu.primitives.warp import sum as warp_sum, WARP_SIZE
-from math import ceildiv
-from buffer import NDBuffer, DimList
-from algorithm import sum
-from layout import Layout, LayoutTensor
+from gpu import thread_idx, block_idx, block_dim, grid_dim
 from os.atomic import Atomic
+from memory import stack_allocation
+from gpu.host import DeviceContext
+from math import ceildiv
 
+comptime TBsize = 512
+
+# level1.dot
+# computes the dot product of two vectors
 fn dot_device[
-    in_layout: Layout,
-    size: Int,
+    BLOCK: Int,
     dtype: DType
 ](
+    n: Int,
+    x: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    incx: Int,
+    y: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    incy: Int,
     output: UnsafePointer[Scalar[dtype], MutAnyOrigin],
-    a: LayoutTensor[dtype, in_layout, ImmutAnyOrigin],
-    b: LayoutTensor[dtype, in_layout, ImmutAnyOrigin],
 ):
-    global_i = block_dim.x * block_idx.x + thread_idx.x
+    if n < 1:
+        return
 
-    # Each thread computes one partial product using vectorized approach as values in Mojo are SIMD based
-    var partial_product: Scalar[dtype] = 0
-    if global_i < UInt(size):
-        partial_product = (a[global_i] * b[global_i]).reduce_add()
+    var global_i = block_dim.x * block_idx.x + thread_idx.x
+    var n_threads = grid_dim.x * block_dim.x
+    var local_i = thread_idx.x
 
-    # warp_sum() replaces all the shared memory + barriers + tree reduction
-    total = warp_sum(partial_product)
+    shared_res = stack_allocation[
+        BLOCK,
+        Scalar[dtype],
+        address_space = AddressSpace.SHARED
+    ]()
 
-    # Only lane 0 writes the result (all lanes have the same total)
-    if lane_id() == 0:
-        _ = Atomic[dtype].fetch_add(output, total)
+    var thread_sum = Scalar[dtype](0)
+    for i in range(global_i, n, n_threads):
+        thread_sum += x[i * incx] * y[i * incy]
+
+    shared_res[local_i] = thread_sum
+    barrier()
+
+    var stride = BLOCK // 2
+    while stride > 0:
+        if local_i < stride:
+            shared_res[local_i] += shared_res[local_i + stride]
+        barrier()
+        stride //= 2
+
+    if local_i == 0:
+        _ = Atomic[dtype].fetch_add(output, shared_res[0])
+
+
+fn blas_dot[dtype: DType](
+    n: Int,
+    d_x: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    incx: Int,
+    d_y: UnsafePointer[Scalar[dtype], ImmutAnyOrigin],
+    incy: Int,
+    d_out: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    ctx: DeviceContext
+) raises:
+    comptime kernel = dot_device[TBsize, dtype]
+    ctx.enqueue_function[
+        kernel, kernel
+    ](
+        n, d_x, incx,
+        d_y, incy, d_out,
+        grid_dim=ceildiv(n, TBsize),
+        block_dim=TBsize,
+    )
+    ctx.synchronize()
