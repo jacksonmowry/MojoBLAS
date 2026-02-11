@@ -34,9 +34,8 @@ fn blas_copy[dtype: DType](
     incy: Int,
     ctx: DeviceContext
 ) raises:
-    kernel = ctx.compile_function[copy_device[dtype], copy_device[dtype]]()
-    ctx.enqueue_function(
-        kernel,
+    comptime kernel = copy_device[dtype]
+    ctx.enqueue_function[kernel, kernel](
         n,
         d_x, incx,
         d_y, incy,

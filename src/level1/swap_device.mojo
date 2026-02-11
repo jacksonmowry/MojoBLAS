@@ -34,9 +34,8 @@ fn blas_swap[dtype: DType](
     incy: Int,
     ctx: DeviceContext
 ) raises:
-    kernel = ctx.compile_function[swap_device[dtype], swap_device[dtype]]()
-    ctx.enqueue_function(
-        kernel,
+    comptime kernel = swap_device[dtype]
+    ctx.enqueue_function[kernel, kernel](
         n,
         d_x, incx,
         d_y, incy,

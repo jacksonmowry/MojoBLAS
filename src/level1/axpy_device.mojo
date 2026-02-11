@@ -36,9 +36,8 @@ fn blas_axpy[dtype: DType](
     incy: Int,
     ctx: DeviceContext
 ) raises:
-    axpy_kernel = ctx.compile_function[axpy_device[dtype], axpy_device[dtype]]()
-    ctx.enqueue_function(
-        axpy_kernel,
+    comptime kernel = axpy_device[dtype]
+    ctx.enqueue_function[kernel, kernel](
         n, a,
         d_x, incx,
         d_y, incy,

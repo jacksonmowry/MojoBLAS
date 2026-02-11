@@ -32,9 +32,8 @@ fn blas_scal[dtype: DType] (
     incx: Int,
     ctx: DeviceContext
 ) raises:
-    kernel = ctx.compile_function[scal_device[dtype], scal_device[dtype]]()
-    ctx.enqueue_function(
-        kernel,
+    comptime kernel = scal_device[dtype]
+    ctx.enqueue_function[kernel, kernel](
         n, a, d_x, incx,
         grid_dim=ceildiv(n, TBsize),
         block_dim=TBsize,

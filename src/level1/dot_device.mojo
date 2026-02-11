@@ -60,9 +60,7 @@ fn blas_dot[dtype: DType](
     ctx: DeviceContext
 ) raises:
     comptime kernel = dot_device[TBsize, dtype]
-    ctx.enqueue_function[
-        kernel, kernel
-    ](
+    ctx.enqueue_function[kernel, kernel](
         n, d_x, incx,
         d_y, incy, d_out,
         grid_dim=ceildiv(n, TBsize),
