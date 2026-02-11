@@ -569,7 +569,6 @@ def test_iamax():
     iamax_test[DType.float64, 4096]()
 
 def test_nrm2():
-    print("nrm2 testing")
     nrm2_test[DType.float32, 256]()
     nrm2_test[DType.float32, 4096]()
     nrm2_test[DType.float64, 256]()
