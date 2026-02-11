@@ -28,7 +28,7 @@ fn dot_device[
 
     shared_res = stack_allocation[
         BLOCK,
-        Scalar[dtype],
+        Float64,
         address_space = AddressSpace.SHARED
     ]()
 
@@ -36,7 +36,7 @@ fn dot_device[
     for i in range(global_i, n, n_threads):
         thread_sum += x[i * incx] * y[i * incy]
 
-    shared_res[local_i] = thread_sum
+    shared_res[local_i] = Float64(thread_sum)
     barrier()
 
     var stride = BLOCK // 2
@@ -47,7 +47,7 @@ fn dot_device[
         stride //= 2
 
     if local_i == 0:
-        _ = Atomic[dtype].fetch_add(output, shared_res[0])
+        _ = Atomic[dtype].fetch_add(output, Scalar[dtype](shared_res[0]))
 
 
 fn blas_dot[dtype: DType](
