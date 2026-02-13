@@ -28,6 +28,7 @@ jobs:
       # Runs a set of commands using the runners shell
       - name: Run a multi-line script
         run: |
+          system_profiler SPSoftwareDataType SPHardwareDataType
           curl -fsSL https://pixi.sh/install.sh | sh
           echo 'export PATH="$HOME/.pixi/bin:$PATH"' >> ~/.zshrc
           source ~/.zshrc
