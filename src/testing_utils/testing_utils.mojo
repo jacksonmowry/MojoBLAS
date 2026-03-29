@@ -255,3 +255,24 @@ fn dense_to_sym_band_cm[dtype: DType](
                     val = A_band[(j - i) + i * lda]
 
             A_dense[i * n + j] = val
+
+fn dense_to_tri_band[dtype: DType](
+    A_dense: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    A_band: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    n: Int,
+    uplo: Int,
+):
+    var index = 0
+    for j in range(n):
+        if uplo:
+            for i in range(0, j+1):
+                A_band[index] = A_dense[i * n + j]
+                index += 1
+        else:
+            for i in range(j, n):
+                A_band[index] = A_dense[i * n + j]
+                index += 1
+
+    var n_packed = n * (n + 1) / 2
+    for i in range(index, n_packed):
+        A_band[i] = 0
