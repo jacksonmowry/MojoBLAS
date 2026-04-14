@@ -167,55 +167,32 @@ fn blas_tbmv[dtype: DType](
 
     var trans_i = 1 if trans else 0
 
-    # If the caller did not supply a temp buffer, allocate one automatically.
-    if d_temp:
-        @parameter
-        if dtype == DType.float32:
-            ctx.enqueue_function[stbmv_device, stbmv_device](
-                uplo, trans_i, diag,
-                n, k, d_A, lda,
-                d_x, incx, d_temp,
-                grid_dim=ceildiv(n, TBsize),
-                block_dim=TBsize,
-            )
-        elif dtype == DType.float64:
-            ctx.enqueue_function[dtbmv_device, dtbmv_device](
-                uplo, trans_i, diag,
-                n, k, d_A, lda,
-                d_x, incx, d_temp,
-                grid_dim=ceildiv(n, TBsize),
-                block_dim=TBsize,
-            )
-        else:
-            raise Error("blas_tbmv: Unsupported type")
+    # Use the caller-supplied temp buffer when provided; otherwise allocate one
+    # automatically for this call.  owned_temp is only valid when d_temp is null.
+    var owned_temp = ctx.enqueue_create_buffer[dtype](0 if d_temp else n)
+    var work_temp = d_temp if d_temp else owned_temp.unsafe_ptr()
 
-        # Copy accumulated results from temp back into x using the level-1
-        # copy routine (temp has stride 1; x has stride incx).
-        blas_copy[dtype](n, d_temp, 1, d_x, incx, ctx)
+    @parameter
+    if dtype == DType.float32:
+        ctx.enqueue_function[stbmv_device, stbmv_device](
+            uplo, trans_i, diag,
+            n, k, d_A, lda,
+            d_x, incx, work_temp,
+            grid_dim=ceildiv(n, TBsize),
+            block_dim=TBsize,
+        )
+    elif dtype == DType.float64:
+        ctx.enqueue_function[dtbmv_device, dtbmv_device](
+            uplo, trans_i, diag,
+            n, k, d_A, lda,
+            d_x, incx, work_temp,
+            grid_dim=ceildiv(n, TBsize),
+            block_dim=TBsize,
+        )
     else:
-        var owned_temp = ctx.enqueue_create_buffer[dtype](n)
+        raise Error("blas_tbmv: Unsupported type")
 
-        @parameter
-        if dtype == DType.float32:
-            ctx.enqueue_function[stbmv_device, stbmv_device](
-                uplo, trans_i, diag,
-                n, k, d_A, lda,
-                d_x, incx, owned_temp.unsafe_ptr(),
-                grid_dim=ceildiv(n, TBsize),
-                block_dim=TBsize,
-            )
-        elif dtype == DType.float64:
-            ctx.enqueue_function[dtbmv_device, dtbmv_device](
-                uplo, trans_i, diag,
-                n, k, d_A, lda,
-                d_x, incx, owned_temp.unsafe_ptr(),
-                grid_dim=ceildiv(n, TBsize),
-                block_dim=TBsize,
-            )
-        else:
-            raise Error("blas_tbmv: Unsupported type")
-
-        # Copy accumulated results from temp back into x using the level-1
-        # copy routine (temp has stride 1; x has stride incx).
-        blas_copy[dtype](n, owned_temp.unsafe_ptr(), 1, d_x, incx, ctx)
+    # Copy accumulated results from temp back into x using the level-1
+    # copy routine (temp has stride 1; x has stride incx).
+    blas_copy[dtype](n, work_temp, 1, d_x, incx, ctx)
 
