@@ -11,10 +11,10 @@ comptime TBsize = 512
 # uplo: 0 = upper triangle, 1 = lower triangle
 #
 # Upper triangular packed storage (column-major):
-#   AP[j*(j+1)/2 + i] = A[i,j] for 0 <= i <= j < n
+#   AP[j*(j+1)//2 + i] = A[i,j] for 0 <= i <= j < n
 #
 # Lower triangular packed storage (column-major):
-#   AP[j*(2*n-j+1)/2 + (i-j)] = A[i,j] for 0 <= j <= i < n
+#   AP[j*(2*n-j+1)//2 + (i-j)] = A[i,j] for 0 <= j <= i < n
 #
 # Each thread handles a unique row i, updating all relevant AP entries
 # for that row with no data race.
