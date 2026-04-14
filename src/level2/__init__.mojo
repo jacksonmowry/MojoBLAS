@@ -1,5 +1,6 @@
 from .gemv_device import *
 from .ger_device import *
+from .spr_device import *
 from .syr_device import *
 from .syr2_device import *
 from .gbmv_device import *
