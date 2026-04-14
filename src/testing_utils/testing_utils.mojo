@@ -206,6 +206,30 @@ fn dense_to_sym_band_rm[dtype: DType](
 
             A_dense[i * n + j] = val
 
+# Packs a row-major dense symmetric n×n matrix into column-major packed
+# triangular storage (as expected by BLAS spmv / sspmv / dspmv).
+#
+# Upper triangular (upper=True):
+#   AP[j*(j+1)/2 + i] = A[i,j]  for 0 <= i <= j < n
+#
+# Lower triangular (upper=False):
+#   AP[j*(2*n-j-1)/2 + i] = A[i,j]  for 0 <= j <= i < n
+fn dense_to_packed[dtype: DType](
+    A_dense: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    AP: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    n: Int,
+    upper: Bool,
+):
+    if upper:
+        for j in range(n):
+            for i in range(j + 1):
+                AP[j * (j + 1) // 2 + i] = A_dense[i * n + j]
+    else:
+        for j in range(n):
+            for i in range(j, n):
+                AP[j * (2 * n - j - 1) // 2 + i] = A_dense[i * n + j]
+
+
 # Packs row-major dense matrix to column-major band buffer
 fn dense_to_sym_band_cm[dtype: DType](
     A_dense: UnsafePointer[Scalar[dtype], MutAnyOrigin],

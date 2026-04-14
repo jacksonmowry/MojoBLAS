@@ -848,6 +848,117 @@ def test_trsv():
     trsv_test[DType.float64,  64,  False, 0, 1]()
     trsv_test[DType.float64,  64,  False, 1, 1]()
 
+# Symmetric Packed Matrix-Vector multiply: y := alpha*A*x + beta*y
+# A is stored in column-major packed format (upper or lower triangle).
+# Each y[i] is independent so the kernel is fully multi-threaded.
+def spmv_test[
+    dtype: DType,
+    n: Int,
+    upper: Bool,
+]():
+    var packed_len = n * (n + 1) // 2
+
+    with DeviceContext() as ctx:
+        # Packed matrix on device and host
+        AP_d = ctx.enqueue_create_buffer[dtype](packed_len)
+        AP = ctx.enqueue_create_host_buffer[dtype](packed_len)
+
+        x_d = ctx.enqueue_create_buffer[dtype](n)
+        x = ctx.enqueue_create_host_buffer[dtype](n)
+
+        y_d = ctx.enqueue_create_buffer[dtype](n)
+        y = ctx.enqueue_create_host_buffer[dtype](n)
+
+        # Dense symmetric matrix (kept for reference norm only)
+        A_dense = ctx.enqueue_create_host_buffer[dtype](n * n)
+
+        generate_random_arr[dtype](n * n, A_dense.unsafe_ptr(), -1, 1)
+
+        # Force symmetry: A = 0.5*(A + A^T)
+        for i in range(n):
+            for j in range(i, n):
+                var sym = (A_dense[i * n + j] + A_dense[j * n + i]) * Scalar[dtype](0.5)
+                A_dense[i * n + j] = sym
+                A_dense[j * n + i] = sym
+
+        # Pack dense matrix into column-major packed format
+        dense_to_packed[dtype](A_dense.unsafe_ptr(), AP.unsafe_ptr(), n, upper)
+
+        generate_random_arr[dtype](n, x.unsafe_ptr(), -100, 100)
+        generate_random_arr[dtype](n, y.unsafe_ptr(), -100, 100)
+
+        var alpha = generate_random_scalar[dtype](-100, 100)
+        var beta  = generate_random_scalar[dtype](-100, 100)
+
+        # Compute norms using the full dense matrix for the error bound
+        var norm_A = frobenius_norm[dtype](A_dense.unsafe_ptr(), n * n)
+        var norm_x = frobenius_norm[dtype](x.unsafe_ptr(), n)
+        var norm_y = frobenius_norm[dtype](y.unsafe_ptr(), n)
+
+        ctx.enqueue_copy(AP_d, AP)
+        ctx.enqueue_copy(x_d, x)
+        ctx.enqueue_copy(y_d, y)
+        ctx.synchronize()
+
+        blas_spmv[dtype](
+            upper,
+            n,
+            alpha,
+            AP_d.unsafe_ptr(),
+            x_d.unsafe_ptr(), 1,
+            beta,
+            y_d.unsafe_ptr(), 1,
+            ctx,
+        )
+
+        sp = Python.import_module("scipy")
+        np = Python.import_module("numpy")
+        sp_blas = sp.linalg.blas
+
+        py_AP = Python.list()
+        py_x  = Python.list()
+        py_y  = Python.list()
+        for i in range(packed_len):
+            py_AP.append(AP[i])
+        for i in range(n):
+            py_x.append(x[i])
+            py_y.append(y[i])
+
+        var sp_res: PythonObject
+
+        if dtype == DType.float32:
+            np_AP = np.array(py_AP, dtype=np.float32)
+            np_x  = np.array(py_x,  dtype=np.float32)
+            np_y  = np.array(py_y,  dtype=np.float32)
+            sp_res = sp_blas.sspmv(n, alpha, np_AP, np_x, beta=beta, y=np_y, lower=0 if upper else 1)
+        elif dtype == DType.float64:
+            np_AP = np.array(py_AP, dtype=np.float64)
+            np_x  = np.array(py_x,  dtype=np.float64)
+            np_y  = np.array(py_y,  dtype=np.float64)
+            sp_res = sp_blas.dspmv(n, alpha, np_AP, np_x, beta=beta, y=np_y, lower=0 if upper else 1)
+        else:
+            print("Unsupported type: ", dtype)
+            return
+
+        with y_d.map_to_host() as res_mojo:
+            var norm_diff = Scalar[dtype](0)
+            for i in range(n):
+                var diff = res_mojo[i] - Scalar[dtype](py=sp_res[i])
+                norm_diff += diff * diff
+            norm_diff = sqrt(norm_diff)
+            var ok = check_gemm_error[dtype](1, n, n, alpha, beta, norm_A, norm_x, norm_y, norm_diff)
+            assert_true(ok)
+
+def test_spmv():
+    spmv_test[DType.float32,   64, True]()
+    spmv_test[DType.float32,   64, False]()
+    spmv_test[DType.float64,   64, True]()
+    spmv_test[DType.float64,   64, False]()
+    spmv_test[DType.float32, 1024, True]()
+    spmv_test[DType.float32, 1024, False]()
+    spmv_test[DType.float64, 1024, True]()
+    spmv_test[DType.float64, 1024, False]()
+
 def main():
     print("--- MojoBLAS Level 2 routines testing ---")
     var args = argv()
@@ -865,6 +976,7 @@ def main():
         elif args[i] == "gbmv":  suite.test[test_gbmv]()
         elif args[i] == "trsv":  suite.test[test_trsv]()
         elif args[i] == "symv":  suite.test[test_symv]()
+        elif args[i] == "spmv":  suite.test[test_spmv]()
         else: print("unknown routine:", args[i])
     suite^.run()
 
