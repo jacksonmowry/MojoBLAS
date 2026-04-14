@@ -812,6 +812,7 @@ def tbmv_test[
             n, k,
             A_d.unsafe_ptr(), lda,
             x_d.unsafe_ptr(), 1,
+            UnsafePointer[Scalar[dtype], MutAnyOrigin](),
             ctx,
         )
 

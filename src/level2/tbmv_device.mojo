@@ -1,5 +1,6 @@
 from gpu import thread_idx, block_idx, block_dim, grid_dim
 from gpu.host import DeviceContext
+from ..level1.copy_device import blas_copy
 
 # level2.tbmv
 # Performs triangular band matrix-vector multiplication
@@ -25,63 +26,61 @@ fn stbmv_device(
     lda: Int,
     x: UnsafePointer[Float32, MutAnyOrigin],
     incx: Int,
+    temp: UnsafePointer[Float32, MutAnyOrigin],
 ):
     var tid = block_dim.x * block_idx.x + thread_idx.x
     if tid != 0:
         return
 
+    # All results are accumulated into temp[] so that every read of x[]
+    # occurs before any element of x[] is overwritten, enabling parallel
+    # execution across threads in the future.
     if not trans:
         if uplo:
-            # Upper triangular, no-transpose: x[i] = sum_{j=i}^{min(n-1,i+k)} A[i,j]*x[j]
-            # Process forward so original x[j] (j>i) is still valid when computing x[i]
+            # Upper triangular, no-transpose: temp[i] = sum_{j=i}^{min(n-1,i+k)} A[i,j]*x[j]
             for i in range(n):
-                var temp = Float32(0)
+                var t = Float32(0)
                 var j_end = min(n - 1, i + k)
                 for j in range(i, j_end + 1):
                     if j == i and diag:
-                        temp += x[j * incx]
+                        t += x[j * incx]
                     else:
-                        temp += A[i * lda + (j - i)] * x[j * incx]
-                x[i * incx] = temp
+                        t += A[i * lda + (j - i)] * x[j * incx]
+                temp[i] = t
         else:
-            # Lower triangular, no-transpose: x[i] = sum_{j=max(0,i-k)}^{i} A[i,j]*x[j]
-            # Process backward so original x[j] (j<i) is still valid when computing x[i]
-            for idx in range(n):
-                var i = n - 1 - idx
-                var temp = Float32(0)
+            # Lower triangular, no-transpose: temp[i] = sum_{j=max(0,i-k)}^{i} A[i,j]*x[j]
+            for i in range(n):
+                var t = Float32(0)
                 var j_start = max(0, i - k)
                 for j in range(j_start, i + 1):
                     if j == i and diag:
-                        temp += x[j * incx]
+                        t += x[j * incx]
                     else:
-                        temp += A[i * lda + (i - j)] * x[j * incx]
-                x[i * incx] = temp
+                        t += A[i * lda + (i - j)] * x[j * incx]
+                temp[i] = t
     else:
         if uplo:
-            # Upper triangular, transpose: x[j] = sum_{i=max(0,j-k)}^{j} A[i,j]*x[i]
-            # Process backward so original x[i] (i<j) is still valid when computing x[j]
-            for idx in range(n):
-                var j = n - 1 - idx
-                var temp = Float32(0)
+            # Upper triangular, transpose: temp[j] = sum_{i=max(0,j-k)}^{j} A[i,j]*x[i]
+            for j in range(n):
+                var t = Float32(0)
                 var i_start = max(0, j - k)
                 for i in range(i_start, j + 1):
                     if i == j and diag:
-                        temp += x[i * incx]
+                        t += x[i * incx]
                     else:
-                        temp += A[i * lda + (j - i)] * x[i * incx]
-                x[j * incx] = temp
+                        t += A[i * lda + (j - i)] * x[i * incx]
+                temp[j] = t
         else:
-            # Lower triangular, transpose: x[j] = sum_{i=j}^{min(n-1,j+k)} A[i,j]*x[i]
-            # Process forward so original x[i] (i>j) is still valid when computing x[j]
+            # Lower triangular, transpose: temp[j] = sum_{i=j}^{min(n-1,j+k)} A[i,j]*x[i]
             for j in range(n):
-                var temp = Float32(0)
+                var t = Float32(0)
                 var i_end = min(n - 1, j + k)
                 for i in range(j, i_end + 1):
                     if i == j and diag:
-                        temp += x[i * incx]
+                        t += x[i * incx]
                     else:
-                        temp += A[i * lda + (i - j)] * x[i * incx]
-                x[j * incx] = temp
+                        t += A[i * lda + (i - j)] * x[i * incx]
+                temp[j] = t
 
 
 fn dtbmv_device(
@@ -94,63 +93,61 @@ fn dtbmv_device(
     lda: Int,
     x: UnsafePointer[Float64, MutAnyOrigin],
     incx: Int,
+    temp: UnsafePointer[Float64, MutAnyOrigin],
 ):
     var tid = block_dim.x * block_idx.x + thread_idx.x
     if tid != 0:
         return
 
+    # All results are accumulated into temp[] so that every read of x[]
+    # occurs before any element of x[] is overwritten, enabling parallel
+    # execution across threads in the future.
     if not trans:
         if uplo:
-            # Upper triangular, no-transpose: x[i] = sum_{j=i}^{min(n-1,i+k)} A[i,j]*x[j]
-            # Process forward so original x[j] (j>i) is still valid when computing x[i]
+            # Upper triangular, no-transpose: temp[i] = sum_{j=i}^{min(n-1,i+k)} A[i,j]*x[j]
             for i in range(n):
-                var temp = Float64(0)
+                var t = Float64(0)
                 var j_end = min(n - 1, i + k)
                 for j in range(i, j_end + 1):
                     if j == i and diag:
-                        temp += x[j * incx]
+                        t += x[j * incx]
                     else:
-                        temp += A[i * lda + (j - i)] * x[j * incx]
-                x[i * incx] = temp
+                        t += A[i * lda + (j - i)] * x[j * incx]
+                temp[i] = t
         else:
-            # Lower triangular, no-transpose: x[i] = sum_{j=max(0,i-k)}^{i} A[i,j]*x[j]
-            # Process backward so original x[j] (j<i) is still valid when computing x[i]
-            for idx in range(n):
-                var i = n - 1 - idx
-                var temp = Float64(0)
+            # Lower triangular, no-transpose: temp[i] = sum_{j=max(0,i-k)}^{i} A[i,j]*x[j]
+            for i in range(n):
+                var t = Float64(0)
                 var j_start = max(0, i - k)
                 for j in range(j_start, i + 1):
                     if j == i and diag:
-                        temp += x[j * incx]
+                        t += x[j * incx]
                     else:
-                        temp += A[i * lda + (i - j)] * x[j * incx]
-                x[i * incx] = temp
+                        t += A[i * lda + (i - j)] * x[j * incx]
+                temp[i] = t
     else:
         if uplo:
-            # Upper triangular, transpose: x[j] = sum_{i=max(0,j-k)}^{j} A[i,j]*x[i]
-            # Process backward so original x[i] (i<j) is still valid when computing x[j]
-            for idx in range(n):
-                var j = n - 1 - idx
-                var temp = Float64(0)
+            # Upper triangular, transpose: temp[j] = sum_{i=max(0,j-k)}^{j} A[i,j]*x[i]
+            for j in range(n):
+                var t = Float64(0)
                 var i_start = max(0, j - k)
                 for i in range(i_start, j + 1):
                     if i == j and diag:
-                        temp += x[i * incx]
+                        t += x[i * incx]
                     else:
-                        temp += A[i * lda + (j - i)] * x[i * incx]
-                x[j * incx] = temp
+                        t += A[i * lda + (j - i)] * x[i * incx]
+                temp[j] = t
         else:
-            # Lower triangular, transpose: x[j] = sum_{i=j}^{min(n-1,j+k)} A[i,j]*x[i]
-            # Process forward so original x[i] (i>j) is still valid when computing x[j]
+            # Lower triangular, transpose: temp[j] = sum_{i=j}^{min(n-1,j+k)} A[i,j]*x[i]
             for j in range(n):
-                var temp = Float64(0)
+                var t = Float64(0)
                 var i_end = min(n - 1, j + k)
                 for i in range(j, i_end + 1):
                     if i == j and diag:
-                        temp += x[i * incx]
+                        t += x[i * incx]
                     else:
-                        temp += A[i * lda + (i - j)] * x[i * incx]
-                x[j * incx] = temp
+                        t += A[i * lda + (i - j)] * x[i * incx]
+                temp[j] = t
 
 
 fn blas_tbmv[dtype: DType](
@@ -163,6 +160,7 @@ fn blas_tbmv[dtype: DType](
     lda: Int,
     d_x: UnsafePointer[Scalar[dtype], MutAnyOrigin],
     incx: Int,
+    d_temp: UnsafePointer[Scalar[dtype], MutAnyOrigin],
     ctx: DeviceContext,
 ) raises:
 
@@ -174,24 +172,54 @@ fn blas_tbmv[dtype: DType](
 
     var trans_i = 1 if trans else 0
 
-    @parameter
-    if dtype == DType.float32:
-        ctx.enqueue_function[stbmv_device, stbmv_device](
-            uplo, trans_i, diag,
-            n, k, d_A, lda,
-            d_x, incx,
-            grid_dim=1,
-            block_dim=1,
-        )
-    elif dtype == DType.float64:
-        ctx.enqueue_function[dtbmv_device, dtbmv_device](
-            uplo, trans_i, diag,
-            n, k, d_A, lda,
-            d_x, incx,
-            grid_dim=1,
-            block_dim=1,
-        )
-    else:
-        raise Error("blas_tbmv: Unsupported type")
+    # If the caller did not supply a temp buffer, allocate one automatically.
+    if d_temp:
+        @parameter
+        if dtype == DType.float32:
+            ctx.enqueue_function[stbmv_device, stbmv_device](
+                uplo, trans_i, diag,
+                n, k, d_A, lda,
+                d_x, incx, d_temp,
+                grid_dim=1,
+                block_dim=1,
+            )
+        elif dtype == DType.float64:
+            ctx.enqueue_function[dtbmv_device, dtbmv_device](
+                uplo, trans_i, diag,
+                n, k, d_A, lda,
+                d_x, incx, d_temp,
+                grid_dim=1,
+                block_dim=1,
+            )
+        else:
+            raise Error("blas_tbmv: Unsupported type")
 
-    ctx.synchronize()
+        # Copy accumulated results from temp back into x using the level-1
+        # copy routine (temp has stride 1; x has stride incx).
+        blas_copy[dtype](n, d_temp, 1, d_x, incx, ctx)
+    else:
+        var owned_temp = ctx.enqueue_create_buffer[dtype](n)
+
+        @parameter
+        if dtype == DType.float32:
+            ctx.enqueue_function[stbmv_device, stbmv_device](
+                uplo, trans_i, diag,
+                n, k, d_A, lda,
+                d_x, incx, owned_temp.unsafe_ptr(),
+                grid_dim=1,
+                block_dim=1,
+            )
+        elif dtype == DType.float64:
+            ctx.enqueue_function[dtbmv_device, dtbmv_device](
+                uplo, trans_i, diag,
+                n, k, d_A, lda,
+                d_x, incx, owned_temp.unsafe_ptr(),
+                grid_dim=1,
+                block_dim=1,
+            )
+        else:
+            raise Error("blas_tbmv: Unsupported type")
+
+        # Copy accumulated results from temp back into x using the level-1
+        # copy routine (temp has stride 1; x has stride incx).
+        blas_copy[dtype](n, owned_temp.unsafe_ptr(), 1, d_x, incx, ctx)
