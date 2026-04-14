@@ -138,14 +138,14 @@ fn frobenius_norm_symmetric[dtype: DType](
 fn frobenius_norm_packed[dtype: DType](
     AP: UnsafePointer[Scalar[dtype], MutAnyOrigin],
     n: Int,
-    lower: Int  # 0 = upper triangle, 1 = lower triangle
+    uplo: Int  # 0 = upper triangle, 1 = lower triangle
 ) -> Scalar[dtype]:
     # Compute the Frobenius norm of a symmetric matrix stored in packed format.
     # Off-diagonal elements appear once in AP but represent two symmetric entries,
     # so they are counted twice.
     var sum = Scalar[dtype](0)
     var k = 0
-    if lower == 0:
+    if uplo == 0:
         # upper triangular: column j stores rows 0..j
         for j in range(n):
             for i in range(j + 1):
