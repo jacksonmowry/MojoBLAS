@@ -8,13 +8,15 @@ comptime TBsize = 512
 # Performs symmetric packed rank-2 update:
 # AP := alpha*x*y**T + alpha*y*x**T + AP
 # uplo: 0 = upper triangle, 1 = lower triangle
-# AP is stored in packed format (n*(n+1)/2 elements, column-major)
+# AP is stored in packed format (n*(n+1)/2 elements, row-major)
 #
-# Upper triangular packing (uplo=0):
-#   AP[i + j*(j+1)//2] = A[i,j]  for 0 <= i <= j < n
+# Upper triangular packing (uplo=0), row-major:
+#   AP[i*n - i*(i-1)//2 + (j-i)] = A[i,j]  for 0 <= i <= j < n
+#   (row i starts at offset i*n - i*(i-1)//2, stores columns i..n-1)
 #
-# Lower triangular packing (uplo=1):
-#   AP[j*n - j*(j-1)//2 + (i-j)] = A[i,j]  for 0 <= j <= i < n
+# Lower triangular packing (uplo=1), row-major:
+#   AP[i*(i+1)//2 + j] = A[i,j]  for 0 <= j <= i < n
+#   (row i starts at offset i*(i+1)//2, stores columns 0..i)
 #
 # Each GPU thread handles one row i, writing to distinct AP positions,
 # so no data races occur and the kernel is fully parallel.
@@ -31,24 +33,26 @@ fn sspr2_device(
     var global_i = block_dim.x * block_idx.x + thread_idx.x
     var n_threads = grid_dim.x * block_dim.x
 
-    # upper triangle: AP[i + j*(j+1)//2] for 0 <= i <= j
+    # upper triangle: AP[i*n - i*(i-1)//2 + (j-i)] for 0 <= i <= j
     if not uplo:
         for i in range(global_i, n, n_threads):
             var xi = x[i * incx]
             var yi = y[i * incy]
             var alpha_xi = alpha * xi
             var alpha_yi = alpha * yi
+            var row_start = i * n - i * (i - 1) // 2
             for j in range(i, n):
-                AP[i + j * (j + 1) // 2] += alpha_xi * y[j * incy] + alpha_yi * x[j * incx]
-    # lower triangle: AP[j*n - j*(j-1)//2 + (i-j)] for 0 <= j <= i
+                AP[row_start + (j - i)] += alpha_xi * y[j * incy] + alpha_yi * x[j * incx]
+    # lower triangle: AP[i*(i+1)//2 + j] for 0 <= j <= i
     else:
         for i in range(global_i, n, n_threads):
             var xi = x[i * incx]
             var yi = y[i * incy]
             var alpha_xi = alpha * xi
             var alpha_yi = alpha * yi
+            var row_start = i * (i + 1) // 2
             for j in range(0, i + 1):
-                AP[j * n - j * (j - 1) // 2 + (i - j)] += alpha_xi * y[j * incy] + alpha_yi * x[j * incx]
+                AP[row_start + j] += alpha_xi * y[j * incy] + alpha_yi * x[j * incx]
 
 fn dspr2_device(
     uplo: Int,
@@ -63,24 +67,26 @@ fn dspr2_device(
     var global_i = block_dim.x * block_idx.x + thread_idx.x
     var n_threads = grid_dim.x * block_dim.x
 
-    # upper triangle: AP[i + j*(j+1)//2] for 0 <= i <= j
+    # upper triangle: AP[i*n - i*(i-1)//2 + (j-i)] for 0 <= i <= j
     if not uplo:
         for i in range(global_i, n, n_threads):
             var xi = x[i * incx]
             var yi = y[i * incy]
             var alpha_xi = alpha * xi
             var alpha_yi = alpha * yi
+            var row_start = i * n - i * (i - 1) // 2
             for j in range(i, n):
-                AP[i + j * (j + 1) // 2] += alpha_xi * y[j * incy] + alpha_yi * x[j * incx]
-    # lower triangle: AP[j*n - j*(j-1)//2 + (i-j)] for 0 <= j <= i
+                AP[row_start + (j - i)] += alpha_xi * y[j * incy] + alpha_yi * x[j * incx]
+    # lower triangle: AP[i*(i+1)//2 + j] for 0 <= j <= i
     else:
         for i in range(global_i, n, n_threads):
             var xi = x[i * incx]
             var yi = y[i * incy]
             var alpha_xi = alpha * xi
             var alpha_yi = alpha * yi
+            var row_start = i * (i + 1) // 2
             for j in range(0, i + 1):
-                AP[j * n - j * (j - 1) // 2 + (i - j)] += alpha_xi * y[j * incy] + alpha_yi * x[j * incx]
+                AP[row_start + j] += alpha_xi * y[j * incy] + alpha_yi * x[j * incx]
 
 fn blas_spr2[dtype: DType](
     uplo: Int,

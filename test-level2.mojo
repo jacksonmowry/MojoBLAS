@@ -328,8 +328,12 @@ def spr2_test[
     comptime packed_size = n * (n + 1) // 2
 
     with DeviceContext() as ctx:
+        # Row-major packed AP for MojoBLAS
         AP_d = ctx.enqueue_create_buffer[dtype](packed_size)
         AP = ctx.enqueue_create_host_buffer[dtype](packed_size)
+
+        # Column-major packed AP for SciPy reference
+        AP_cm = ctx.enqueue_create_host_buffer[dtype](packed_size)
 
         x_d = ctx.enqueue_create_buffer[dtype](n)
         x = ctx.enqueue_create_host_buffer[dtype](n)
@@ -340,6 +344,9 @@ def spr2_test[
         generate_random_arr[dtype](packed_size, AP.unsafe_ptr(), -100, 100)
         generate_random_arr[dtype](n, x.unsafe_ptr(), -100, 100)
         generate_random_arr[dtype](n, y.unsafe_ptr(), -100, 100)
+
+        # Convert row-major AP to column-major for SciPy
+        sym_packed_rm_to_cm[dtype](AP.unsafe_ptr(), AP_cm.unsafe_ptr(), n, uplo)
 
         ctx.enqueue_copy(AP_d, AP)
         ctx.enqueue_copy(x_d, x)
@@ -367,24 +374,24 @@ def spr2_test[
         np = Python.import_module("numpy")
         sp_blas = sp.linalg.blas
 
-        py_AP = Python.list()
+        py_AP_cm = Python.list()
         py_x = Python.list()
         py_y = Python.list()
 
         for i in range(packed_size):
-            py_AP.append(AP[i])
+            py_AP_cm.append(AP_cm[i])
         for i in range(n):
             py_x.append(x[i])
             py_y.append(y[i])
 
         var sp_res: PythonObject
         if dtype == DType.float32:
-            np_AP = np.array(py_AP, dtype=np.float32)
+            np_AP = np.array(py_AP_cm, dtype=np.float32)
             np_x = np.array(py_x, dtype=np.float32)
             np_y = np.array(py_y, dtype=np.float32)
             sp_res = sp_blas.sspr2(alpha, np_x, np_y, np_AP, lower=uplo, overwrite_ap=False)
         elif dtype == DType.float64:
-            np_AP = np.array(py_AP, dtype=np.float64)
+            np_AP = np.array(py_AP_cm, dtype=np.float64)
             np_x = np.array(py_x, dtype=np.float64)
             np_y = np.array(py_y, dtype=np.float64)
             sp_res = sp_blas.dspr2(alpha, np_x, np_y, np_AP, lower=uplo, overwrite_ap=False)
@@ -393,9 +400,25 @@ def spr2_test[
             return
 
         with AP_d.map_to_host() as res_mojo:
+            # Build error array in row-major sequential order so that
+            # frobenius_norm_packed can correctly identify diagonal elements.
+            # res_mojo is row-major packed; sp_res is column-major packed.
             var error = InlineArray[Scalar[dtype], packed_size](fill=Scalar[dtype](0))
-            for i in range(packed_size):
-                error[i] = res_mojo[i] - Scalar[dtype](py=sp_res[i])
+            var k = 0
+            if uplo == 0:
+                for i in range(n):
+                    for j in range(i, n):
+                        var rm_idx = i * n - i * (i - 1) // 2 + (j - i)
+                        var cm_idx = i + j * (j + 1) // 2
+                        error[k] = res_mojo[rm_idx] - Scalar[dtype](py=sp_res[cm_idx])
+                        k += 1
+            else:
+                for i in range(n):
+                    for j in range(i + 1):
+                        var rm_idx = i * (i + 1) // 2 + j
+                        var cm_idx = j * n - j * (j - 1) // 2 + (i - j)
+                        error[k] = res_mojo[rm_idx] - Scalar[dtype](py=sp_res[cm_idx])
+                        k += 1
 
             var error_norm = frobenius_norm_packed[dtype](
                 error.unsafe_ptr(),
