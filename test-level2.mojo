@@ -247,10 +247,8 @@ def spr_test[
 
         blas_spr[dtype](uplo, n, alpha, x_d.unsafe_ptr(), 1, AP_d.unsafe_ptr(), ctx)
 
-        # Import SciPy and numpy
-        sp = Python.import_module("scipy")
+        # Compute reference in row-major packed format using numpy
         np = Python.import_module("numpy")
-        sp_blas = sp.linalg.blas
 
         py_AP = Python.list()
         py_x = Python.list()
@@ -259,22 +257,37 @@ def spr_test[
         for i in range(n):
             py_x.append(x[i])
 
-        var sp_res: PythonObject
+        var np_AP: PythonObject
+        var np_x: PythonObject
         if dtype == DType.float32:
             np_AP = np.array(py_AP, dtype=np.float32)
             np_x = np.array(py_x, dtype=np.float32)
-            sp_res = sp_blas.sspr(alpha, np_x, lower=uplo, ap=np_AP, overwrite_ap=False)
         elif dtype == DType.float64:
             np_AP = np.array(py_AP, dtype=np.float64)
             np_x = np.array(py_x, dtype=np.float64)
-            sp_res = sp_blas.dspr(alpha, np_x, lower=uplo, ap=np_AP, overwrite_ap=False)
         else:
             print("Unsupported type: ", dtype)
             return
 
+        # Compute alpha * outer(x, x) and add to AP entries in row-major order.
+        # Upper (uplo=0): AP[i*(2*n-i-1)//2 + j] for 0 <= i <= j < n
+        # Lower (uplo=1): AP[i*(i+1)//2 + j]     for 0 <= j <= i < n
+        outer = np_x.__mul__(alpha).__mul__(np_x.reshape(n, 1))
+        expected = np_AP.copy()
+        if not uplo:
+            for i in range(n):
+                base = i * (2 * n - i - 1) // 2
+                for j in range(i, n):
+                    expected[base + j] = np_AP[base + j] + outer[i][j]
+        else:
+            for i in range(n):
+                base = i * (i + 1) // 2
+                for j in range(0, i + 1):
+                    expected[base + j] = np_AP[base + j] + outer[i][j]
+
         with AP_d.map_to_host() as res_mojo:
             for i in range(ap_len):
-                assert_almost_equal(res_mojo[i], Scalar[dtype](py=sp_res[i]), atol=atol)
+                assert_almost_equal(res_mojo[i], Scalar[dtype](py=expected[i]), atol=atol)
 
 def syr2_test[
     dtype: DType,
