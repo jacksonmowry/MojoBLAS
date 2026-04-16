@@ -281,6 +281,28 @@ fn dense_to_sym_band_cm[dtype: DType](
             A_dense[i * n + j] = val
 
 
+# Converts a packed symmetric matrix from row-major to column-major layout.
+# uplo: 0 = upper triangle, 1 = lower triangle
+fn sym_packed_rm_to_cm[dtype: DType](
+    AP_rm: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    AP_cm: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    n: Int,
+    uplo: Int,
+):
+    if uplo == 0:
+        # Upper row-major:  AP_rm[i*n - i*(i-1)//2 + (j-i)] = A[i,j], j>=i
+        # Upper col-major:  AP_cm[i + j*(j+1)//2]            = A[i,j], j>=i
+        for i in range(n):
+            for j in range(i, n):
+                AP_cm[i + j * (j + 1) // 2] = AP_rm[i * n - i * (i - 1) // 2 + (j - i)]
+    else:
+        # Lower row-major:  AP_rm[i*(i+1)//2 + j]            = A[i,j], j<=i
+        # Lower col-major:  AP_cm[j*n - j*(j-1)//2 + (i-j)]  = A[i,j], j<=i
+        for i in range(n):
+            for j in range(i + 1):
+                AP_cm[j * n - j * (j - 1) // 2 + (i - j)] = AP_rm[i * (i + 1) // 2 + j]
+
+
 def arr_min_max_mean(
     arr: List[Float32]
 ) -> Tuple[Float32, Float32, Float32]:

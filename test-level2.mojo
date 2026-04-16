@@ -247,47 +247,44 @@ def spr_test[
 
         blas_spr[dtype](uplo, n, alpha, x_d.unsafe_ptr(), 1, AP_d.unsafe_ptr(), ctx)
 
-        # Compute reference in row-major packed format using numpy
-        np = Python.import_module("numpy")
+        # Convert row-major packed AP input to column-major for scipy reference
+        AP_cm = ctx.enqueue_create_host_buffer[dtype](ap_len)
+        sym_packed_rm_to_cm[dtype](AP.unsafe_ptr(), AP_cm.unsafe_ptr(), n, uplo)
 
-        py_AP = Python.list()
+        # Import SciPy and numpy
+        sp = Python.import_module("scipy")
+        np = Python.import_module("numpy")
+        sp_blas = sp.linalg.blas
+
+        py_AP_cm = Python.list()
         py_x = Python.list()
         for i in range(ap_len):
-            py_AP.append(AP[i])
+            py_AP_cm.append(AP_cm[i])
         for i in range(n):
             py_x.append(x[i])
 
-        var np_AP: PythonObject
-        var np_x: PythonObject
+        var sp_res: PythonObject
         if dtype == DType.float32:
-            np_AP = np.array(py_AP, dtype=np.float32)
+            np_AP = np.array(py_AP_cm, dtype=np.float32)
             np_x = np.array(py_x, dtype=np.float32)
+            sp_res = sp_blas.sspr(alpha, np_x, lower=uplo, ap=np_AP, overwrite_ap=False)
         elif dtype == DType.float64:
-            np_AP = np.array(py_AP, dtype=np.float64)
+            np_AP = np.array(py_AP_cm, dtype=np.float64)
             np_x = np.array(py_x, dtype=np.float64)
+            sp_res = sp_blas.dspr(alpha, np_x, lower=uplo, ap=np_AP, overwrite_ap=False)
         else:
             print("Unsupported type: ", dtype)
             return
 
-        # Compute alpha * outer(x, x) and add to AP entries in row-major order.
-        # Upper (uplo=0): AP[i*(2*n-i-1)//2 + j] for 0 <= i <= j < n
-        # Lower (uplo=1): AP[i*(i+1)//2 + j]     for 0 <= j <= i < n
-        outer = np_x.__mul__(alpha).__mul__(np_x.reshape(n, 1))
-        expected = np_AP.copy()
-        if not uplo:
-            for i in range(n):
-                base = i * (2 * n - i - 1) // 2
-                for j in range(i, n):
-                    expected[base + j] = np_AP[base + j] + outer[i][j]
-        else:
-            for i in range(n):
-                base = i * (i + 1) // 2
-                for j in range(0, i + 1):
-                    expected[base + j] = np_AP[base + j] + outer[i][j]
-
+        # Convert kernel's row-major result to column-major and compare with scipy
         with AP_d.map_to_host() as res_mojo:
+            AP_rm_res = ctx.enqueue_create_host_buffer[dtype](ap_len)
             for i in range(ap_len):
-                assert_almost_equal(res_mojo[i], Scalar[dtype](py=expected[i]), atol=atol)
+                AP_rm_res[i] = res_mojo[i]
+            AP_cm_res = ctx.enqueue_create_host_buffer[dtype](ap_len)
+            sym_packed_rm_to_cm[dtype](AP_rm_res.unsafe_ptr(), AP_cm_res.unsafe_ptr(), n, uplo)
+            for i in range(ap_len):
+                assert_almost_equal(AP_cm_res[i], Scalar[dtype](py=sp_res[i]), atol=atol)
 
 def syr2_test[
     dtype: DType,
