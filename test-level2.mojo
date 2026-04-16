@@ -228,16 +228,24 @@ def spr_test[
     n: Int,
     uplo: Int,
 ]():
-    comptime ap_len = n * (n + 1) // 2
+    comptime packed_size = n * (n + 1) // 2
 
     with DeviceContext() as ctx:
-        AP_d = ctx.enqueue_create_buffer[dtype](ap_len)
-        AP = ctx.enqueue_create_host_buffer[dtype](ap_len)
+        # Row-major packed AP for MojoBLAS
+        AP_d = ctx.enqueue_create_buffer[dtype](packed_size)
+        AP = ctx.enqueue_create_host_buffer[dtype](packed_size)
+
+        # Column-major packed AP for SciPy reference
+        AP_cm = ctx.enqueue_create_host_buffer[dtype](packed_size)
+
         x_d = ctx.enqueue_create_buffer[dtype](n)
         x = ctx.enqueue_create_host_buffer[dtype](n)
 
-        generate_random_arr[dtype](ap_len, AP.unsafe_ptr(), -100, 100)
+        generate_random_arr[dtype](packed_size, AP.unsafe_ptr(), -100, 100)
         generate_random_arr[dtype](n, x.unsafe_ptr(), -100, 100)
+
+        # Convert row-major AP to column-major for SciPy
+        sym_packed_rm_to_cm[dtype](AP.unsafe_ptr(), AP_cm.unsafe_ptr(), n, uplo)
 
         ctx.enqueue_copy(AP_d, AP)
         ctx.enqueue_copy(x_d, x)
@@ -245,11 +253,10 @@ def spr_test[
 
         var alpha = generate_random_scalar[dtype](-100, 100)
 
-        blas_spr[dtype](uplo, n, alpha, x_d.unsafe_ptr(), 1, AP_d.unsafe_ptr(), ctx)
+        var norm_AP = frobenius_norm_packed[dtype](AP.unsafe_ptr(), n, uplo)
+        var norm_x = frobenius_norm[dtype](x.unsafe_ptr(), n)
 
-        # Convert row-major packed AP input to column-major for scipy reference
-        AP_cm = ctx.enqueue_create_host_buffer[dtype](ap_len)
-        sym_packed_rm_to_cm[dtype](AP.unsafe_ptr(), AP_cm.unsafe_ptr(), n, uplo)
+        blas_spr[dtype](uplo, n, alpha, x_d.unsafe_ptr(), 1, AP_d.unsafe_ptr(), ctx)
 
         # Import SciPy and numpy
         sp = Python.import_module("scipy")
@@ -258,7 +265,7 @@ def spr_test[
 
         py_AP_cm = Python.list()
         py_x = Python.list()
-        for i in range(ap_len):
+        for i in range(packed_size):
             py_AP_cm.append(AP_cm[i])
         for i in range(n):
             py_x.append(x[i])
@@ -276,15 +283,43 @@ def spr_test[
             print("Unsupported type: ", dtype)
             return
 
-        # Convert kernel's row-major result to column-major and compare with scipy
         with AP_d.map_to_host() as res_mojo:
-            AP_rm_res = ctx.enqueue_create_host_buffer[dtype](ap_len)
-            for i in range(ap_len):
-                AP_rm_res[i] = res_mojo[i]
-            AP_cm_res = ctx.enqueue_create_host_buffer[dtype](ap_len)
-            sym_packed_rm_to_cm[dtype](AP_rm_res.unsafe_ptr(), AP_cm_res.unsafe_ptr(), n, uplo)
-            for i in range(ap_len):
-                assert_almost_equal(AP_cm_res[i], Scalar[dtype](py=sp_res[i]), atol=atol)
+            # Build error array in row-major sequential order so that
+            # frobenius_norm_packed can correctly identify diagonal elements.
+            # res_mojo is row-major packed; sp_res is column-major packed.
+            var error = InlineArray[Scalar[dtype], packed_size](fill=Scalar[dtype](0))
+            var k = 0
+            if uplo == 0:
+                for i in range(n):
+                    for j in range(i, n):
+                        var rm_idx = i * n - i * (i - 1) // 2 + (j - i)
+                        var cm_idx = i + j * (j + 1) // 2
+                        error[k] = res_mojo[rm_idx] - Scalar[dtype](py=sp_res[cm_idx])
+                        k += 1
+            else:
+                for i in range(n):
+                    for j in range(i + 1):
+                        var rm_idx = i * (i + 1) // 2 + j
+                        var cm_idx = j * n - j * (j - 1) // 2 + (i - j)
+                        error[k] = res_mojo[rm_idx] - Scalar[dtype](py=sp_res[cm_idx])
+                        k += 1
+
+            var error_norm = frobenius_norm_packed[dtype](
+                error.unsafe_ptr(),
+                n,
+                uplo,
+            )
+
+            var passed = check_syr_error[dtype](
+                n,
+                alpha,
+                norm_x,
+                norm_x,
+                norm_AP,
+                error_norm,
+            )
+
+            assert_true(passed)
 
 def syr2_test[
     dtype: DType,

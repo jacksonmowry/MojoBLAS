@@ -78,6 +78,38 @@ fn frobenius_norm[dtype: DType](
         sum += a[i] * a[i]
     return sqrt(sum)
 
+fn frobenius_norm_packed[dtype: DType](
+    AP: UnsafePointer[Scalar[dtype], MutAnyOrigin],
+    n: Int,
+    uplo: Int  # 0 = upper triangle, 1 = lower triangle
+) -> Scalar[dtype]:
+    # Compute the Frobenius norm of a symmetric matrix stored in row-major
+    # packed format.  Off-diagonal elements appear once in AP but represent
+    # two symmetric entries, so they are counted twice.
+    var sum = Scalar[dtype](0)
+    var k = 0
+    if uplo == 0:
+        # upper triangular row-major: row i stores columns i..n-1
+        for i in range(n):
+            for j in range(i, n):
+                var val = AP[k]
+                k += 1
+                if i == j:
+                    sum += val * val
+                else:
+                    sum += Scalar[dtype](2) * val * val
+    else:
+        # lower triangular row-major: row i stores columns 0..i
+        for i in range(n):
+            for j in range(i + 1):
+                var val = AP[k]
+                k += 1
+                if i == j:
+                    sum += val * val
+                else:
+                    sum += Scalar[dtype](2) * val * val
+    return sqrt(sum)
+
 fn check_syr_error[dtype: DType](
     n: Int,
     alpha: Scalar[dtype],
